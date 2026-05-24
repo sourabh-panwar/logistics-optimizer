@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, List, Tuple
-from routing_algorithm import calculate_optimal_route
+from app.routing_algorithm import calculate_optimal_route
 
 app = FastAPI()
 

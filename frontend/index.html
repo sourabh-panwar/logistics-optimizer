@@ -3,41 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nebula Logistics Map</title>
+    <title>Smart Logistics Engine - Data Setup</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    
-    <!-- Import Leaflet Routing Machine for OSRM street network calculation -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
     
     <style>
-        body { margin: 0; padding: 0; }
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         #map { width: 100vw; height: 100vh; }
         #control-panel {
             position: absolute;
-            top: 10px;
+            top: 15px;
             left: 50px;
             z-index: 1000;
             background: white;
-            padding: 15px;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-            font-family: sans-serif;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            max-width: 320px;
+        }
+        .status-badge {
+            background: #e9ecef;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: bold;
+            display: inline-block;
+            margin-bottom: 15px;
         }
         button {
+            width: 100%;
             padding: 10px;
-            background: #007bff;
+            background: #28a745;
             color: white;
             border: none;
             cursor: pointer;
-            border-radius: 3px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 14px;
+            margin-top: 10px;
         }
-        .reset-btn { background: #dc3545; margin-left: 5px; }
+        button:hover { background: #218838; }
+        .reset-btn { background: #dc3545; margin-top: 5px; }
+        .reset-btn:hover { background: #c82333; }
+        
+        /* Styling for the popup forms inside the map */
+        .popup-form label { display: block; margin-top: 8px; font-size: 12px; color: #495057; }
+        .popup-form input { width: 130px; padding: 4px; margin-top: 4px; box-sizing: border-box; }
+        .popup-form button { padding: 5px; font-size: 12px; margin-top: 10px; }
     </style>
 </head>
 <body>
 
     <div id="control-panel">
-        <p>Click the map to inject new destination nodes.</p>
+        <div id="status-display" class="status-badge" style="color: #007bff;">Phase 1: Click Map to Set Warehouse</div>
+        <p style="margin: 0 0 10px 0; font-size: 13px; color: #6c757d;">Configure your nodes before executing optimization sequence.</p>
         <button onclick="executeRouting()">Calculate Street Route</button>
         <button onclick="resetMap()" class="reset-btn">Reset Graph</button>
     </div>
@@ -48,59 +67,148 @@
     <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
     
     <script>
-        const map = L.map('map').setView([28.6139, 77.2090], 10);
+        // Initialize map focused on Delhi area
+        const map = L.map('map').setView([28.6139, 77.2090], 11);
 
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap'
+            attribution: '© OpenStreetMap contributors'
         }).addTo(map);
 
-        const WAREHOUSE_COORDS = L.latLng(28.6139, 77.2090);
-        let coordinatesMap = { "Warehouse": WAREHOUSE_COORDS };
+        // Architectural States: "SELECT_WAREHOUSE" or "ADD_DROPOFFS"
+        let currentState = "SELECT_WAREHOUSE";
+        
+        // Data Storage Objects
+        let warehouseLatLng = null;
+        let warehouseMarker = null;
         let dropoffCounter = 1;
-        let markers = [];
-        let routingControl = null; // Replaced routeLayer with routingControl
+        
+        let coordinatesMap = {};  // Maps node names to physical L.LatLng objects
+        let dropoffData = {};     // Maps node names to structural metadata (weights, package numbers, demand)
+        let markers = [];         // Keeps track of markers so we can wipe them on reset
+        let routingControl = null;
 
-        const warehouseMarker = L.marker(WAREHOUSE_COORDS).addTo(map).bindPopup("Warehouse Origin");
-        markers.push(warehouseMarker);
+        // Custom Placeholder Demand Function
+        function calculateDemand(weight, packageNum) {
+            // Independent Variables: weight (kg), packageNum (count)
+            // For now, let's create a predictable mock mathematical scale (maxing out at 1.0)
+            let baseDemand = (weight * 0.02) + (packageNum * 0.05);
+            return parseFloat(Math.min(1.0, baseDemand).toFixed(2));
+        }
 
+        // Core Map Intercept Loop
         map.on('click', function(e) {
-            const nodeName = "Dropoff_" + dropoffCounter;
-            coordinatesMap[nodeName] = e.latlng;
-            const newMarker = L.marker(e.latlng).addTo(map).bindPopup(nodeName);
-            markers.push(newMarker);
-            dropoffCounter++;
+            if (currentState === "SELECT_WAREHOUSE") {
+                // Set the Warehouse
+                warehouseLatLng = e.latlng;
+                coordinatesMap["Warehouse"] = warehouseLatLng;
+                
+                warehouseMarker = L.marker(warehouseLatLng).addTo(map)
+                    .bindPopup("<b>Primary Warehouse Origin</b>")
+                    .openPopup();
+                
+                markers.push(warehouseMarker);
+                
+                // Advance state machine
+                currentState = "ADD_DROPOFFS";
+                document.getElementById("status-display").innerText = "Phase 2: Add Dropoffs";
+                document.getElementById("status-display").style.color = "#28a745";
+                
+            } else if (currentState === "ADD_DROPOFFS") {
+                // Setup temporary click tracking for the popup form submission
+                const clickedLatLng = e.latlng;
+                const nodeName = "Dropoff_" + dropoffCounter;
+                
+                // Construct standard HTML structural form directly inside the Leaflet popup container
+                const formHtml = `
+                    <div class="popup-form">
+                        <b style="color:#28a745;">Configure ${nodeName}</b>
+                        <label>Package ID / Number:</label>
+                        <input type="number" id="pop_num" value="${dropoffCounter}">
+                        <label>Cargo Weight (kg):</label>
+                        <input type="number" id="pop_weight" value="10" min="1">
+                        <button onclick="saveDropoffData('${nodeName}', ${clickedLatLng.lat}, ${clickedLatLng.lng})">Confirm Node</button>
+                    </div>
+                `;
+
+                // Open a floating contextual popup at the exact point clicked
+                L.popup()
+                    .setLatLng(clickedLatLng)
+                    .setContent(formHtml)
+                    .openOn(map);
+            }
         });
+
+        // Triggered when user clicks "Confirm Node" inside the map popup
+        function saveDropoffData(nodeName, lat, lng) {
+            const pNum = parseInt(document.getElementById("pop_num").value) || 0;
+            const pWeight = parseFloat(document.getElementById("pop_weight").value) || 1.0;
+            
+            // Execute our explicit demand heuristic function
+            const computedDemand = calculateDemand(pWeight, pNum);
+            
+            // Map strings to raw geospatial data objects
+            const latlng = L.latLng(lat, lng);
+            coordinatesMap[nodeName] = latlng;
+            
+            // Store variables inside our structural data block
+            dropoffData[nodeName] = {
+                package_number: pNum,
+                weight_kg: pWeight,
+                demand: computedDemand
+            };
+
+            // Permanently close the popup container and replace it with a designated Map Pin marker
+            map.closePopup();
+            
+            const dropMarker = L.marker(latlng).addTo(map)
+                .bindPopup(`<b>${nodeName}</b><br>Packages: ${pNum}<br>Weight: ${pWeight}kg<br>Computed Demand: ${computedDemand}`);
+            
+            markers.push(dropMarker);
+            dropoffCounter++;
+        }
 
         function resetMap() {
             if (routingControl) {
                 map.removeControl(routingControl);
                 routingControl = null;
             }
-            markers.forEach(m => {
-                if (m !== warehouseMarker) map.removeLayer(m);
-            });
-            markers = [warehouseMarker];
-            coordinatesMap = { "Warehouse": WAREHOUSE_COORDS };
+            markers.forEach(m => map.removeLayer(m));
+            
+            // Clear all data registers
+            markers = [];
+            coordinatesMap = {};
+            dropoffData = {};
+            warehouseLatLng = null;
+            warehouseMarker = null;
             dropoffCounter = 1;
+            
+            currentState = "SELECT_WAREHOUSE";
+            document.getElementById("status-display").innerText = "Phase 1: Click Map to Set Warehouse";
+            document.getElementById("status-display").style.color = "#007bff";
         }
 
         async function executeRouting() {
             const nodes = Object.keys(coordinatesMap);
-            if (nodes.length < 2) return;
+            if (nodes.length < 2) {
+                alert("Please drop a warehouse and at least one dropoff location first.");
+                return;
+            }
 
             const dynamicGraph = {};
             const destinations = [];
             const demandFactors = {};
 
-            // Constructing the complete graph representation
+            // Constructing the relational network model matrix using user values
             for (let i = 0; i < nodes.length; i++) {
                 const u = nodes[i];
                 dynamicGraph[u] = [];
+                
                 if (u !== "Warehouse") {
                     destinations.push(u);
-                    demandFactors[u] = parseFloat(Math.random().toFixed(2));
+                    // Fetch real structural values assigned by user instead of random placeholders
+                    demandFactors[u] = dropoffData[u].demand;
                 }
+                
                 for (let j = 0; j < nodes.length; j++) {
                     const v = nodes[j];
                     if (u !== v) {
@@ -123,16 +231,12 @@
                 });
 
                 const result = await response.json();
-                
-                // Map the returned sequence strictly to our physical coordinates
                 const sequencedWaypoints = result.optimal_sequence.map(node => coordinatesMap[node]);
 
-                // Destroy the old physical route network before drawing the new one
                 if (routingControl) {
                     map.removeControl(routingControl);
                 }
 
-                // Utilize the Leaflet Routing Machine engine to snap our sequence to physical streets
                 routingControl = L.Routing.control({
                     waypoints: sequencedWaypoints,
                     routeWhileDragging: false,
@@ -140,12 +244,12 @@
                     showAlternatives: false,
                     fitSelectedRoutes: true,
                     lineOptions: {
-                        styles: [{color: '#007bff', opacity: 0.8, weight: 6}]
+                        styles: [{color: '#28a745', opacity: 0.8, weight: 6}]
                     }
                 }).addTo(map);
 
             } catch (error) {
-                console.error("Execution failed:", error);
+                console.error("API execution failure:", error);
             }
         }
     </script>
