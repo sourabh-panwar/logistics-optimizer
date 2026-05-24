@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nebula Logistics Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Import Leaflet Routing Machine for OSRM street network calculation -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+    
+    <style>
+        body { margin: 0; padding: 0; }
+        #map { width: 100vw; height: 100vh; }
+        #control-panel {
+            position: absolute;
+            top: 10px;
+            left: 50px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+            font-family: sans-serif;
+        }
+        button {
+            padding: 10px;
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        .reset-btn { background: #dc3545; margin-left: 5px; }
+    </style>
+</head>
+<body>
+
+    <div id="control-panel">
+        <p>Click the map to inject new destination nodes.</p>
+        <button onclick="executeRouting()">Calculate Street Route</button>
+        <button onclick="resetMap()" class="reset-btn">Reset Graph</button>
+    </div>
+    
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+    
+    <script>
+        const map = L.map('map').setView([28.6139, 77.2090], 10);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© OpenStreetMap'
+        }).addTo(map);
+
+        const WAREHOUSE_COORDS = L.latLng(28.6139, 77.2090);
+        let coordinatesMap = { "Warehouse": WAREHOUSE_COORDS };
+        let dropoffCounter = 1;
+        let markers = [];
+        let routingControl = null; // Replaced routeLayer with routingControl
+
+        const warehouseMarker = L.marker(WAREHOUSE_COORDS).addTo(map).bindPopup("Warehouse Origin");
+        markers.push(warehouseMarker);
+
+        map.on('click', function(e) {
+            const nodeName = "Dropoff_" + dropoffCounter;
+            coordinatesMap[nodeName] = e.latlng;
+            const newMarker = L.marker(e.latlng).addTo(map).bindPopup(nodeName);
+            markers.push(newMarker);
+            dropoffCounter++;
+        });
+
+        function resetMap() {
+            if (routingControl) {
+                map.removeControl(routingControl);
+                routingControl = null;
+            }
+            markers.forEach(m => {
+                if (m !== warehouseMarker) map.removeLayer(m);
+            });
+            markers = [warehouseMarker];
+            coordinatesMap = { "Warehouse": WAREHOUSE_COORDS };
+            dropoffCounter = 1;
+        }
+
+        async function executeRouting() {
+            const nodes = Object.keys(coordinatesMap);
+            if (nodes.length < 2) return;
+
+            const dynamicGraph = {};
+            const destinations = [];
+            const demandFactors = {};
+
+            // Constructing the complete graph representation
+            for (let i = 0; i < nodes.length; i++) {
+                const u = nodes[i];
+                dynamicGraph[u] = [];
+                if (u !== "Warehouse") {
+                    destinations.push(u);
+                    demandFactors[u] = parseFloat(Math.random().toFixed(2));
+                }
+                for (let j = 0; j < nodes.length; j++) {
+                    const v = nodes[j];
+                    if (u !== v) {
+                        const distanceKm = parseFloat((coordinatesMap[u].distanceTo(coordinatesMap[v]) / 1000).toFixed(2));
+                        dynamicGraph[u].push([v, distanceKm]);
+                    }
+                }
+            }
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/optimize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        graph: dynamicGraph,
+                        start_node: "Warehouse",
+                        destinations: destinations,
+                        demand_factors: demandFactors
+                    })
+                });
+
+                const result = await response.json();
+                
+                // Map the returned sequence strictly to our physical coordinates
+                const sequencedWaypoints = result.optimal_sequence.map(node => coordinatesMap[node]);
+
+                // Destroy the old physical route network before drawing the new one
+                if (routingControl) {
+                    map.removeControl(routingControl);
+                }
+
+                // Utilize the Leaflet Routing Machine engine to snap our sequence to physical streets
+                routingControl = L.Routing.control({
+                    waypoints: sequencedWaypoints,
+                    routeWhileDragging: false,
+                    addWaypoints: false,
+                    showAlternatives: false,
+                    fitSelectedRoutes: true,
+                    lineOptions: {
+                        styles: [{color: '#007bff', opacity: 0.8, weight: 6}]
+                    }
+                }).addTo(map);
+
+            } catch (error) {
+                console.error("Execution failed:", error);
+            }
+        }
+    </script>
+</body>
+</html>
