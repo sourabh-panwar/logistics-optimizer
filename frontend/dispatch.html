@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Logistics Engine - Dispatch</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+    
+    <style>
+        body { margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #eef2f3;}
+        
+        /* Navigation Bar */
+        .navbar { background: #343a40; padding: 12px 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
+        .navbar a { color: white; text-decoration: none; font-weight: bold; font-size: 14px; }
+        .navbar a:hover { color: #007bff; }
+
+        #map { width: 100vw; height: calc(100vh - 45px); }
+        
+        #control-panel {
+            position: absolute;
+            top: 60px;
+            left: 50px;
+            z-index: 1000;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            max-width: 320px;
+        }
+        .status-badge {
+            background: #e9ecef; padding: 6px 12px; border-radius: 4px; font-size: 14px; font-weight: bold; display: inline-block; margin-bottom: 15px;
+        }
+        button {
+            width: 100%; padding: 10px; background: #28a745; color: white; border: none; cursor: pointer; border-radius: 4px; font-weight: bold; font-size: 14px; margin-top: 10px;
+        }
+        button:hover { background: #218838; }
+        .reset-btn { background: #dc3545; margin-top: 5px; }
+        .reset-btn:hover { background: #c82333; }
+        
+        /* Popup form inside map */
+        .popup-form label { display: block; margin-top: 8px; font-size: 12px; color: #495057; }
+        .popup-form input { width: 130px; padding: 4px; margin-top: 4px; box-sizing: border-box; }
+        .popup-form button { padding: 5px; font-size: 12px; margin-top: 10px; }
+
+        /* Action Overlay */
+        #dispatch-action-overlay {
+            display: none; position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            z-index: 1000; background: white; padding: 15px 30px; border-radius: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3); align-items: center; gap: 20px; border: 2px solid #28a745;
+        }
+        .btn-sm { width: auto; padding: 6px 15px; margin: 0; }
+    </style>
+</head>
+<body>
+
+    <div class="navbar">
+        <a href="welcome.html">← Back to Dashboard</a>
+    </div>
+
+    <div id="control-panel">
+        <div id="status-display" class="status-badge" style="color: #007bff;">Phase 1: Click Map to Set Warehouse</div>
+        <p style="margin: 0 0 10px 0; font-size: 13px; color: #6c757d;">Configure your nodes before executing optimization sequence.</p>
+        <button onclick="executeRouting()">Calculate Street Route</button>
+        <button onclick="resetMap()" class="reset-btn">Reset Graph</button>
+    </div>
+
+    <div id="dispatch-action-overlay">
+        <span style="font-weight:bold; color:#155724;">Optimal Route Discovered!</span>
+        <button class="btn-sm" onclick="commitRoute()">Add to Active Deliveries</button>
+    </div>
+    
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+    
+    <script>
+        const map = L.map('map').setView([28.6139, 77.2090], 11);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+
+        let currentState = "SELECT_WAREHOUSE";
+        let warehouseLatLng = null, warehouseMarker = null, dropoffCounter = 1;
+        let coordinatesMap = {}, dropoffData = {}, markers = [], routingControl = null;
+        let currentSequenceString = ""; // Stores the final string for the active page
+
+        function calculateDemand(weight, packageNum) {
+            let baseDemand = (weight * 0.02) + (packageNum * 0.05);
+            return parseFloat(Math.min(1.0, baseDemand).toFixed(2));
+        }
+
+        map.on('click', function(e) {
+            if (currentState === "SELECT_WAREHOUSE") {
+                warehouseLatLng = e.latlng;
+                coordinatesMap["Warehouse"] = warehouseLatLng;
+                warehouseMarker = L.marker(warehouseLatLng).addTo(map).bindPopup("<b>Primary Warehouse</b>").openPopup();
+                markers.push(warehouseMarker);
+                
+                currentState = "ADD_DROPOFFS";
+                document.getElementById("status-display").innerText = "Phase 2: Add Dropoffs";
+                document.getElementById("status-display").style.color = "#28a745";
+                
+            } else if (currentState === "ADD_DROPOFFS") {
+                const nodeName = "Dropoff_" + dropoffCounter;
+                const formHtml = `
+                    <div class="popup-form">
+                        <b style="color:#28a745;">Configure ${nodeName}</b>
+                        <label>Package ID / Number:</label>
+                        <input type="number" id="pop_num" value="${dropoffCounter}">
+                        <label>Cargo Weight (kg):</label>
+                        <input type="number" id="pop_weight" value="10" min="1">
+                        <button onclick="saveDropoffData('${nodeName}', ${e.latlng.lat}, ${e.latlng.lng})">Confirm Node</button>
+                    </div>
+                `;
+                L.popup().setLatLng(e.latlng).setContent(formHtml).openOn(map);
+            }
+        });
+
+        function saveDropoffData(nodeName, lat, lng) {
+            const pNum = parseInt(document.getElementById("pop_num").value) || 0;
+            const pWeight = parseFloat(document.getElementById("pop_weight").value) || 1.0;
+            const computedDemand = calculateDemand(pWeight, pNum);
+            
+            const latlng = L.latLng(lat, lng);
+            coordinatesMap[nodeName] = latlng;
+            dropoffData[nodeName] = { package_number: pNum, weight_kg: pWeight, demand: computedDemand };
+
+            map.closePopup();
+            const dropMarker = L.marker(latlng).addTo(map)
+                .bindPopup(`<b>${nodeName}</b><br>Packages: ${pNum}<br>Weight: ${pWeight}kg<br>Demand: ${computedDemand}`);
+            markers.push(dropMarker);
+            dropoffCounter++;
+        }
+
+        function resetMap() {
+            if (routingControl) { map.removeControl(routingControl); routingControl = null; }
+            markers.forEach(m => map.removeLayer(m));
+            markers = []; coordinatesMap = {}; dropoffData = {};
+            warehouseLatLng = null; warehouseMarker = null; dropoffCounter = 1;
+            document.getElementById('dispatch-action-overlay').style.display = 'none';
+            currentState = "SELECT_WAREHOUSE";
+            document.getElementById("status-display").innerText = "Phase 1: Click Map to Set Warehouse";
+            document.getElementById("status-display").style.color = "#007bff";
+        }
+
+        async function executeRouting() {
+            const nodes = Object.keys(coordinatesMap);
+            if (nodes.length < 2) return alert("Please drop a warehouse and at least one dropoff.");
+
+            const dynamicGraph = {}, destinations = [], demandFactors = {};
+            for (let i = 0; i < nodes.length; i++) {
+                const u = nodes[i]; dynamicGraph[u] = [];
+                if (u !== "Warehouse") { destinations.push(u); demandFactors[u] = dropoffData[u].demand; }
+                for (let j = 0; j < nodes.length; j++) {
+                    const v = nodes[j];
+                    if (u !== v) dynamicGraph[u].push([v, parseFloat((coordinatesMap[u].distanceTo(coordinatesMap[v]) / 1000).toFixed(2))]);
+                }
+            }
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/optimize', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ graph: dynamicGraph, start_node: "Warehouse", destinations: destinations, demand_factors: demandFactors })
+                });
+
+                const result = await response.json();
+                currentSequenceString = result.optimal_sequence.join(" → ");
+                const sequencedWaypoints = result.optimal_sequence.map(node => coordinatesMap[node]);
+
+                if (routingControl) map.removeControl(routingControl);
+
+                routingControl = L.Routing.control({
+                    waypoints: sequencedWaypoints, routeWhileDragging: false, addWaypoints: false, showAlternatives: false, fitSelectedRoutes: true,
+                    lineOptions: { styles: [{color: '#28a745', opacity: 0.8, weight: 6}] }
+                }).addTo(map);
+
+                document.getElementById('dispatch-action-overlay').style.display = 'flex';
+
+            } catch (error) { console.error("API execution failure:", error); }
+        }
+
+        function commitRoute() {
+            let active = JSON.parse(localStorage.getItem("activeRoutes") || "[]");
+            active.push(currentSequenceString);
+            localStorage.setItem("activeRoutes", JSON.stringify(active));
+            window.location.href = "active.html";
+        }
+    </script>
+</body>
+</html>

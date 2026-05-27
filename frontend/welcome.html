@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Nebula Welcome</title>
+    <style>
+        body { font-family: sans-serif; background: #eef2f3; text-align: center; padding: 50px; }
+        .card { background: white; padding: 30px; margin: 15px; border-radius: 8px; display: inline-block; width: 250px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); text-decoration: none; color: black; border-top: 5px solid #007bff; transition: 0.2s;}
+        .card:hover { transform: translateY(-5px); }
+    </style>
+</head>
+<body>
+    <h1>Logistics manager</h1>
+    <p>Select a module to proceed.</p>
+    
+    <div>
+        <a href="dispatch.html" class="card" style="border-color: #007bff;">
+            <h3>New Dispatch</h3>
+            <p>Plan a new optimal route.</p>
+        </a>
+        <a href="active.html" class="card" style="border-color: #28a745;">
+            <h3>Active Deliveries</h3>
+            <p>Track in-transit shipments.</p>
+        </a>
+        <a href="completed.html" class="card" style="border-color: #343a40;">
+            <h3>Completed</h3>
+            <p>View historical logs.</p>
+        </a>
+    </div>
+</body>
+</html>

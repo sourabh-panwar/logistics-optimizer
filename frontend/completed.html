@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Completed Deliveries</title>
+    <style>
+        body { font-family: sans-serif; background: #eef2f3; padding: 30px; }
+        .nav { margin-bottom: 20px; }
+        .nav a { background: #333; color: white; padding: 10px; text-decoration: none; border-radius: 4px; }
+        table { width: 100%; background: white; border-collapse: collapse; }
+        th, td { padding: 15px; border: 1px solid #ddd; text-align: left; }
+    </style>
+</head>
+<body>
+    <div class="nav"><a href="welcome.html">← Dashboard</a></div>
+    <h2>Completed Archive</h2>
+    
+    <table>
+        <thead><tr><th>Sequence Successfully Traversed</th></tr></thead>
+        <tbody id="table-body"></tbody>
+    </table>
+
+    <script>
+        let completed = JSON.parse(localStorage.getItem("completedRoutes") || "[]");
+        let tbody = document.getElementById("table-body");
+        completed.forEach(seq => {
+            tbody.innerHTML += `<tr><td style="color: green;">✓ ${seq}</td></tr>`;
+        });
+    </script>
+</body>
+</html>
